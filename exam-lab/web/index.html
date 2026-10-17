@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="fr">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LocalMenu - Examen blanc</title>
+<style>
+:root{color-scheme:light dark;font:17px/1.6 system-ui;background:Canvas;color:CanvasText}body{max-width:760px;margin:48px auto;padding:0 24px}header{border-bottom:1px solid GrayText;padding-bottom:20px}small,.muted{color:GrayText}h1{line-height:1.2}label{display:block;margin-top:24px;font-weight:600}textarea{box-sizing:border-box;width:100%;padding:12px;border:1px solid GrayText;border-radius:10px;font:inherit;background:Field;color:FieldText}button,a{font:inherit}button{padding:10px 20px;margin:24px 0;cursor:pointer}button:focus-visible,a:focus-visible,textarea:focus-visible{outline:3px solid Highlight;outline-offset:3px}#events{font-size:14px;max-height:120px;overflow:auto}footer{border-top:1px solid GrayText;margin-top:32px;padding-top:20px}
+</style>
+<header><small>LABORATOIRE LOCAL · DONNÉES FICTIVES</small><h1>Examen blanc documentaire</h1>
+<p>Trois questions sur le projet HORIZON-386. Dans le contrôle sans verrouillage, joindre le fichier de notes à LocalMenu. Dans les profils SEB, l’assistant est volontairement interdit.</p>
+<p><strong>Cette page seule ne verrouille rien.</strong> Seule l’ouverture explicite d’un profil .seb active Safe Exam Browser.</p></header>
+<form id="exam">
+<label for="owner">1. Qui est responsable du projet ?</label><textarea id="owner" rows="2" required></textarea>
+<label for="date">2. Quelle est la date de livraison ?</label><textarea id="date" rows="2" required></textarea>
+<label for="budget">3. Quel est le budget en euros ?</label><textarea id="budget" rows="2" required></textarea>
+<button type="submit">Terminer l’essai</button><p id="result" role="status" aria-live="polite"></p>
+</form>
+<section aria-labelledby="observations"><h2 id="observations">Observations locales du navigateur</h2>
+<p class="muted">Seuls les changements de visibilité/focus de cette page sont affichés ici. Ce n’est pas une détection des processus ni une preuve de triche. Aucun envoi, caméra, micro ou capture d’écran.</p><ul id="events"></ul></section>
+<footer><a href="quit.html">Quitter l’examen blanc</a><p class="muted">Sous SEB, Cmd-Q et le mot de passe de laboratoire permettent aussi la sortie. Les réponses restent uniquement dans cette page et disparaissent au rechargement.</p></footer>
+<script>
+const events=document.querySelector('#events');
+function record(message){const item=document.createElement('li');item.textContent=new Date().toLocaleTimeString('fr-FR')+' : '+message;events.prepend(item);while(events.children.length>30)events.lastChild.remove()}
+document.addEventListener('visibilitychange',()=>record(document.hidden?'Page masquée':'Page visible'));
+window.addEventListener('blur',()=>record('Focus perdu'));window.addEventListener('focus',()=>record('Focus retrouvé'));
+document.querySelector('#exam').addEventListener('submit',event=>{event.preventDefault();document.querySelector('#result').textContent='Essai terminé. Comparez les réponses avec les notes et renseignez la grille de test. Aucune note réelle ni réponse n’a été transmise.';record('Essai terminé')});
+record('Sujet chargé');
+</script>
+</html>
