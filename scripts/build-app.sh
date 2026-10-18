@@ -8,11 +8,13 @@ check_build_tools
 swift build -c release --arch arm64
 bin_dir="$(swift build -c release --arch arm64 --show-bin-path)"
 app="dist/LocalMenu.app"
+rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
 cp "$bin_dir/LocalMenu" "$app/Contents/MacOS/LocalMenu"
 cp Resources/Info.plist "$app/Contents/Info.plist"
 mkdir -p "$app/Contents/Resources"
 cp scripts/runtime.sh scripts/platform.sh "$app/Contents/Resources/"
-lipo -verify_arch arm64 "$app/Contents/MacOS/LocalMenu"
+lipo "$app/Contents/MacOS/LocalMenu" -verify_arch arm64
+xattr -cr "$app"
 codesign --force --sign - "$app"
 printf 'Application prête : %s/%s\n' "$PWD" "$app"

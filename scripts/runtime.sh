@@ -31,7 +31,7 @@ if [[ -z "$ollama" ]]; then
     ditto -x -k "$work/ollama.zip" "$work/unpacked"
     codesign --verify --deep --strict "$work/unpacked/Ollama.app"
     spctl --assess --type execute "$work/unpacked/Ollama.app"
-    lipo -verify_arch arm64 "$work/unpacked/Ollama.app/Contents/Resources/ollama"
+    lipo "$work/unpacked/Ollama.app/Contents/Resources/ollama" -verify_arch arm64
     mkdir -p "$directory"
     mv "$work/unpacked/Ollama.app" "$directory/Ollama.app"
     ollama="$directory/Ollama.app/Contents/Resources/ollama"

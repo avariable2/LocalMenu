@@ -32,7 +32,7 @@ fi
 bash "$source_dir/scripts/build-app.sh"
 codesign --verify --strict "$source_dir/dist/LocalMenu.app"
 [[ -x "$source_dir/dist/LocalMenu.app/Contents/MacOS/LocalMenu" ]] || fail "Exécutable compilé introuvable."
-lipo -verify_arch arm64 "$source_dir/dist/LocalMenu.app/Contents/MacOS/LocalMenu"
+lipo "$source_dir/dist/LocalMenu.app/Contents/MacOS/LocalMenu" -verify_arch arm64
 bash "$source_dir/scripts/runtime.sh" setup
 
 mkdir -p "$HOME/Applications"
