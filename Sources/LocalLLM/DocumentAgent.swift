@@ -10,7 +10,6 @@ extension OllamaClient {
         let details = try await localDetails(model: model)
         guard details.capabilities.contains("tools") else { throw DocumentError.toolsUnsupported }
         let vision = details.capabilities.contains("vision")
-        let tools = DocumentTool.available(vision: vision)
         var messages = [
             ChatMessage(role: "system", content: """
             Tu es un assistant documentaire francophone. Tu disposes uniquement d'outils de lecture dans les sources choisies.
@@ -39,8 +38,10 @@ extension OllamaClient {
         var imagesViewed = 0
         for _ in 0..<7 {
             try Task.checkCancellation()
+            // view_page only works on PDF pages and images; offering it for Office text makes small models flail.
+            let canView = vision && viewed.values.contains { $0.location.hasPrefix("page") || $0.location.hasPrefix("image") }
             let response: ChatResponse = try await request(path: "chat", body: JSONEncoder().encode(
-                ChatRequest(model: model, messages: messages, tools: tools)))
+                ChatRequest(model: model, messages: messages, tools: DocumentTool.available(vision: canView))))
             let message = response.message
             let toolCalls = message.tool_calls ?? []
             if toolCalls.isEmpty {
@@ -49,14 +50,15 @@ extension OllamaClient {
                 let matches = text.matches(of: /\[(S[0-9]+)\]/).map { String($0.1) }
                 let valid = calls > 0 && matches.allSatisfy({ viewed[$0] != nil }) && (viewed.isEmpty || !matches.isEmpty)
                 if !valid {
-                    guard citationRetries == 0 else { throw DocumentError.invalidCitation }
+                    guard citationRetries < 2 else { throw DocumentError.invalidCitation }
                     citationRetries += 1
                     messages.append(ChatMessage(role: "assistant", content: text))
                     messages.append(ChatMessage(role: "user", content: """
-                        Réponse rejetée : consulte les outils avant de répondre et cite uniquement des extraits réellement lus.
+                        Réponse rejetée : elle est incomplète ou ne cite pas d'extrait lu.
                         Identifiants déjà consultés : \(viewed.keys.sorted().joined(separator: ", ")).
-                        Même si l'information est absente, indique les extraits examinés avec une référence [S1] adaptée.
-                        Corrige la réponse sans inventer d'information ni d'identifiant.
+                        Si besoin, relis un extrait avec read_passage. Puis rédige la réponse complète à la question
+                        (étapes ou éléments concrets tirés des extraits) en citant les extraits utilisés, par exemple [S1].
+                        N'invente aucune information ni aucun identifiant ; si l'information est absente, dis-le en citant les extraits examinés.
                         """))
                     continue
                 }
