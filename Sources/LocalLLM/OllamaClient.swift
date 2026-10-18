@@ -22,10 +22,9 @@ public struct OllamaClient: Sendable {
         _ = try await localDetails(model: model)
         let result: GenerateResponse = try await request(path: "generate", body:
             JSONEncoder().encode(GenerateRequest(model: model, prompt: question)))
-        guard !result.response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw OllamaError.invalidResponse
-        }
-        return result.response
+        let answer = result.response.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !answer.isEmpty else { throw OllamaError.invalidResponse }
+        return answer
     }
 
     func selectedModel() async throws -> String {
@@ -63,7 +62,7 @@ private struct GenerateRequest: Encodable {
     let prompt: String
     let stream = false
     let think = false
-    let system = "Réponds brièvement en français. Aucun document n'est joint et tu n'as pas accès au Mac. Pour une question sur un fichier, demande de le joindre avec le trombone ; n'invente jamais son contenu."
+    let system = AnswerStyle.concise + " Aucun document n'est joint et tu n'as pas accès au Mac. Pour une question sur un fichier, demande de le joindre avec le trombone ; n'invente jamais son contenu."
 }
 
 private struct GenerateResponse: Decodable {

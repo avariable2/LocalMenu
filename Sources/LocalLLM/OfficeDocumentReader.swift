@@ -1,17 +1,33 @@
 import Foundation
 
 struct OfficeDocumentReader {
-    private static let maximumXMLBytes = 8 * 1024 * 1024
+    static let maximumXMLBytes = 8 * 1024 * 1024
 
     // Fixed archive members only; nothing is extracted onto the filesystem.
-    static func member(_ name: String, in url: URL, optional: Bool = false) throws -> Data {
+    static func member(_ name: String, in url: URL, optional: Bool = false,
+                       maximumBytes: Int = maximumXMLBytes) throws -> Data {
         guard !name.contains(".."), !name.hasPrefix("/"), !name.contains("\\"),
               !name.contains("["), !name.contains("*"), !name.contains("?") else {
             throw DocumentError.unreadable("chemin Office invalide")
         }
+        let (data, status) = try unzip(["-p", url.path, name], maximumBytes: maximumBytes)
+        guard status == 0 else {
+            if optional && status == 11 { return Data() }
+            throw DocumentError.unreadable("archive Office invalide ou membre manquant")
+        }
+        return data
+    }
+
+    static func memberNames(in url: URL) throws -> [String] {
+        let (data, status) = try unzip(["-Z1", url.path], maximumBytes: maximumXMLBytes)
+        guard status == 0 else { throw DocumentError.unreadable("archive invalide") }
+        return String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).map(String.init)
+    }
+
+    private static func unzip(_ arguments: [String], maximumBytes: Int) throws -> (Data, Int32) {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/unzip")
-        process.arguments = ["-p", url.path, name]
+        process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
@@ -25,14 +41,10 @@ struct OfficeDocumentReader {
         while let part = try pipe.fileHandleForReading.read(upToCount: 64 * 1024), !part.isEmpty {
             try Task.checkCancellation()
             data.append(part)
-            guard data.count <= maximumXMLBytes else { throw DocumentError.tooLarge }
+            guard data.count <= maximumBytes else { throw DocumentError.tooLarge }
         }
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            if optional && process.terminationStatus == 11 { return Data() }
-            throw DocumentError.unreadable("archive Office invalide ou membre manquant")
-        }
-        return data
+        return (data, process.terminationStatus)
     }
 
     static func docx(url: URL) throws -> [ExtractedSection] {

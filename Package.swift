@@ -7,7 +7,7 @@ let package = Package(
     targets: [
         .target(name: "LocalLLM"),
         .executableTarget(name: "LocalMenu", dependencies: ["LocalLLM"]),
-        .testTarget(name: "LocalLLMTests", dependencies: ["LocalLLM"]),
+        .testTarget(name: "LocalLLMTests", dependencies: ["LocalLLM"], resources: [.copy("Fixtures")]),
         .testTarget(name: "LocalMenuTests", dependencies: ["LocalMenu", "LocalLLM"])
     ]
 )

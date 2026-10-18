@@ -18,16 +18,25 @@ struct DocumentExtractor {
     static func supports(_ url: URL) -> Bool {
         let ext = url.pathExtension.lowercased()
         return textExtensions.contains(ext) || imageExtensions.contains(ext)
-            || ["pdf", "docx", "xlsx"].contains(ext) || ext.isEmpty
+            || ["pdf", "docx", "xlsx", "pages"].contains(ext) || ext.isEmpty
+    }
+
+    /// Pages can save a document as a package folder instead of a single file; it is still one document.
+    static func isDocumentPackage(_ url: URL) -> Bool {
+        url.pathExtension.lowercased() == "pages"
+            && (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
     }
 
     static func forEachSection(url: URL, emit: (ExtractedSection) throws -> Void) throws {
         try Task.checkCancellation()
         let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-        guard values.isRegularFile == true, values.isSymbolicLink != true else { throw DocumentError.unsupported }
+        guard values.isRegularFile == true || isDocumentPackage(url), values.isSymbolicLink != true else {
+            throw DocumentError.unsupported
+        }
         guard (values.fileSize ?? 0) <= maximumBytes else { throw DocumentError.tooLarge }
         guard supports(url) else { throw DocumentError.unsupported }
         let ext = url.pathExtension.lowercased()
+        if ext == "pages" { try pages(url: url, emit: emit); return }
         if ext == "docx" || ext == "xlsx" {
             guard (values.fileSize ?? 0) <= 32 * 1024 * 1024 else { throw DocumentError.tooLarge }
             let sections = try ext == "docx" ? OfficeDocumentReader.docx(url: url) : OfficeDocumentReader.xlsx(url: url)
@@ -58,6 +67,27 @@ struct DocumentExtractor {
             return
         }
         try TextDocumentReader.forEach(url: url, emit: emit)
+    }
+
+    private static func pages(url: URL, emit: (ExtractedSection) throws -> Void) throws {
+        let archive = try IWorkArchive(url: url)
+        for section in try PagesDocumentReader.sections(of: archive) {
+            try Task.checkCancellation()
+            try emit(section)
+        }
+        let names = try PagesDocumentReader.imageNames(in: archive.container)
+        guard names.count <= 10_000 else { throw DocumentError.tooLarge }
+        for (index, name) in names.enumerated() {
+            try Task.checkCancellation()
+            try autoreleasepool {
+                // Pictures carry text the document does not, such as a pasted chart; decorations are too small to read.
+                guard let image = try? PagesDocumentReader.image(name, in: archive.container),
+                      image.width >= 150, image.height >= 100 else { return }
+                let text = try recognize(image)
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                try emit(ExtractedSection(location: "image \(index + 1), OCR", text: text))
+            }
+        }
     }
 
     private static func pdf(url: URL, emit: (ExtractedSection) throws -> Void) throws {

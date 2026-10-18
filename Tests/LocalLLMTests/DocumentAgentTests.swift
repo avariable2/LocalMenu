@@ -41,6 +41,16 @@ struct DocumentAgentTests {
         #expect(result.sources.first?.location.contains("page 1") == true)
     }
 
+    @Test(arguments: [true, false])
+    func pointsVisionModelsFromChartOCRToThePage(vision: Bool) async throws {
+        let library = try DocumentFixtures.withDirectory { root in
+            try DocumentFixtures.writeMixedPDF(at: root.appending(path: "rapport.pdf"))
+            return try DocumentLibrary(url: root)
+        }
+        let result = try await client(scenario: vision ? "ocrHint" : "ocrNoHint").answer(question: "Date ?", library: library)
+        #expect(result.toolsUsed == ["search_documents"])
+    }
+
     @Test func repairsMissingCitationOnceBeforeAcceptingAnswer() async throws {
         let library = try DocumentFixtures.library()
         let result = try await client(scenario: "repair").answer(question: "Date ?", library: library)
@@ -114,7 +124,8 @@ private final class DocumentAgentStub: URLProtocol, @unchecked Sendable {
             case "/api/tags": output = ["models": [["name": "qwen3:4b"]]]
             case "/api/show":
                 output = scenario == "cloud" ? ["capabilities": ["tools"], "remote_host": "https://example.com"]
-                    : ["capabilities": scenario == "noTools" ? ["completion"] : scenario == "vision" ? ["tools", "vision"] : ["tools"]]
+                    : ["capabilities": scenario == "noTools" ? ["completion"]
+                        : ["vision", "ocrHint"].contains(scenario) ? ["tools", "vision"] : ["tools"]]
             case "/api/chat":
                 #expect(scenario != "cloud" && scenario != "noTools")
                 let payload = try body()
@@ -123,7 +134,7 @@ private final class DocumentAgentStub: URLProtocol, @unchecked Sendable {
                 let tools = try #require(payload["tools"] as? [[String: Any]]).compactMap {
                     ($0["function"] as? [String: Any])?["name"] as? String
                 }
-                #expect(tools.contains("view_page") == (scenario == "vision"))
+                #expect(tools.contains("view_page") == ["vision", "ocrHint"].contains(scenario))
                 let results = messages.filter { $0["role"] as? String == "tool" }
                 var tool: (String, [String: Any])?
                 var text = "La livraison est le 18 novembre 2026 [S1]."
@@ -135,6 +146,13 @@ private final class DocumentAgentStub: URLProtocol, @unchecked Sendable {
                         let image = try #require((page["images"] as? [String])?.first.flatMap { Data(base64Encoded: $0) })
                         #expect(image.starts(with: [0xFF, 0xD8]))
                         text = "La figure indique le 25 novembre 2026 [S1]."
+                    }
+                } else if scenario.hasPrefix("ocr") {
+                    if results.isEmpty { tool = ("search_documents", ["query": "ORION"]) }
+                    else {
+                        let content = results[0]["content"] as? String ?? ""
+                        #expect(content.contains("ORION"))
+                        #expect(content.contains("regarde la page avec view_page") == (scenario == "ocrHint"))
                     }
                 } else if scenario == "loop" { tool = ("search_documents", ["query": "AZUR"]) }
                 else if scenario == "noLookup" { text = "Je devine : demain." }

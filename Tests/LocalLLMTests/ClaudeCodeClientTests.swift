@@ -19,6 +19,13 @@ struct ClaudeCodeClientTests {
                 pwd -P > "\(root.path)/log/cwd"
                 ls -A > "\(root.path)/log/files"
                 printf '%s\\n' "$@" > "\(root.path)/log/args"
+                previous=""
+                for argument in "$@"; do
+                    if [ "$previous" = "--add-dir" ]; then
+                        (cd "$argument" && find . -type f | sort > "\(root.path)/log/extracts" && find . -type f | sort | xargs cat > "\(root.path)/log/extracted")
+                    fi
+                    previous="$argument"
+                done
                 cat > "\(root.path)/log/stdin"
                 sleep \(delay)
                 printf '%s' '\(stderr)' >&2
@@ -58,6 +65,27 @@ struct ClaudeCodeClientTests {
         #expect(arguments[mode + 1] == "dontAsk")
         #expect(arguments.contains("--strict-mcp-config"))
         #expect(arguments.contains("-p"))
+    }
+
+    @Test func givesTheTextOfDocumentsReadCannotOpen() async throws {
+        let fake = try FakeClaude(response: success)
+        defer { fake.remove() }
+        let folder = fake.root.appending(path: "sources")
+        try DocumentFixtures.write("Rapport HELIOS", to: folder.appending(path: "notes.txt"))
+        try FileManager.default.createDirectory(at: folder.appending(path: "Projets"), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: PagesDocumentTests.fixture, to: folder.appending(path: "Projets/rapport.pages"))
+        let library = try DocumentLibrary(url: folder)
+        _ = try await ClaudeCodeClient(executable: fake.executable).answer(question: "Stock de vis ?", source: folder, library: library)
+        let arguments = try fake.logged("args").split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let flag = try #require(arguments.firstIndex(of: "--add-dir"))
+        let directory = arguments[flag + 1]
+        #expect(try fake.logged("extracts") == "./Projets/rapport.pages.txt\n", "Les textes lisibles par Read ne sont pas copiés")
+        let extracted = try fake.logged("extracted")
+        #expect(extracted.hasPrefix("[texte, lignes 1-5]\nRapport Bellerive 2026\n"))
+        #expect(extracted.contains("[tableau Stocks, cellules (valeurs enregistrées), lignes 1-12]\nA1 = Article\n"))
+        // The multi-line system prompt spans several lines of the log.
+        #expect(try fake.logged("args").contains("Leur texte extrait par LocalMenu est dans \(directory), au même chemin relatif suivi de .txt (par exemple Projets/rapport.pages.txt)"))
+        #expect(!FileManager.default.fileExists(atPath: directory), "Le dossier d'extraits est supprimé")
     }
 
     @Test func singleFileIsIsolatedFromItsNeighbours() async throws {

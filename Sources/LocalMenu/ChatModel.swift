@@ -29,33 +29,48 @@ final class ChatModel {
             defaults.set(engine.rawValue, forKey: Self.engineKey)
         }
     }
+    /// Puts each finished answer on the clipboard instead of showing it, with a generation bar and a copy button.
+    var autoCopy: Bool {
+        didSet { defaults.set(autoCopy, forKey: Self.autoCopyKey) }
+    }
     var usesDocuments: Bool { useSources && attachment != nil }
     private(set) var attachment: DocumentLibrary?
     private(set) var sources: [SourceReference] = []
     private(set) var activity = ""
+    /// Briefly true once a complete answer arrives, and after each copy, so the view can confirm it.
+    private(set) var justCompleted = false
+    private(set) var justCopied = false
     var isLoading: Bool { operation != .idle }
+    var isAnswering: Bool { operation == .answer }
     var canChooseSource: Bool { operation != .answer }
     var canRefreshSources: Bool { sourceURL != nil && !isLoading }
     private var operation = Operation.idle
     private var requestID = UUID()
     private var task: Task<Void, Never>?
+    private var completionFlash: Task<Void, Never>?
+    private var copyFlash: Task<Void, Never>?
     private var sourceURL: URL?
     private let client: OllamaClient
     private let claude: ClaudeCodeClient
     private let store: SourceStore
     private let defaults: UserDefaults
+    private let pasteboard: NSPasteboard
     private let picker = SourcePicker()
     private static let engineKey = "engine"
+    private static let autoCopyKey = "autoCopy"
 
     private enum Operation { case idle, answer, index }
 
     init(store: SourceStore = SourceStore(), client: OllamaClient = OllamaClient(),
-         claude: ClaudeCodeClient = ClaudeCodeClient(), defaults: UserDefaults = .standard) {
+         claude: ClaudeCodeClient = ClaudeCodeClient(), defaults: UserDefaults = .standard,
+         pasteboard: NSPasteboard = .general) {
         self.store = store
         self.client = client
         self.claude = claude
         self.defaults = defaults
+        self.pasteboard = pasteboard
         engine = defaults.string(forKey: Self.engineKey).flatMap(Engine.init) ?? .local
+        autoCopy = defaults.bool(forKey: Self.autoCopyKey)
         do {
             if let url = try store.restoredURL() { loadSource(url) }
         } catch {
@@ -100,6 +115,10 @@ final class ChatModel {
                     answer = result
                 }
                 self.question = ""
+                if autoCopy {
+                    completionFlash = flash(\.justCompleted, for: .seconds(1.2), replacing: completionFlash)
+                    copyAnswer()
+                }
             } catch is CancellationError {
             } catch let failure as URLError where failure.code == .cancelled {
             } catch let failure as URLError where failure.code == .cannotConnectToHost {
@@ -177,6 +196,31 @@ final class ChatModel {
         error = nil
         do { try store.forget() }
         catch { self.error = "Effacement de l'index impossible : \(error.localizedDescription)" }
+    }
+
+    func copyAnswer() {
+        guard !answer.isEmpty else { return }
+        pasteboard.clearContents()
+        pasteboard.setString(Self.clipboardText(answer, sources: sources), forType: .string)
+        copyFlash = flash(\.justCopied, for: .seconds(2), replacing: copyFlash)
+    }
+
+    private func flash(_ flag: ReferenceWritableKeyPath<ChatModel, Bool>, for duration: Duration,
+                       replacing previous: Task<Void, Never>?) -> Task<Void, Never> {
+        previous?.cancel()
+        self[keyPath: flag] = true
+        return Task {
+            do { try await Task.sleep(for: duration) } catch { return }
+            self[keyPath: flag] = false
+        }
+    }
+
+    /// Plain text pastes cleanly anywhere: inline Markdown is rendered away, citations keep their references.
+    static func clipboardText(_ answer: String, sources: [SourceReference]) -> String {
+        let text = (try? AttributedString(markdown: answer, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            .map { String($0.characters) } ?? answer
+        guard !sources.isEmpty else { return text }
+        return ([text, ""] + sources.map { "[\($0.id)] \($0.file) · \($0.location)" }).joined(separator: "\n")
     }
 
     func cancel() {

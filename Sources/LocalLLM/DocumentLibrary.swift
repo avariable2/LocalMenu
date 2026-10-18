@@ -20,7 +20,7 @@ public struct DocumentLibrary: Sendable {
         let values = try selected.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
         guard values.isSymbolicLink != true else { throw DocumentError.unsupported }
         let root = selected.resolvingSymlinksInPath().standardizedFileURL
-        let isDirectory = values.isDirectory == true
+        let isDirectory = values.isDirectory == true && !DocumentExtractor.isDocumentPackage(root)
         var files: [URL] = []
         var notices: [String] = []
         if isDirectory {
@@ -36,7 +36,10 @@ public struct DocumentLibrary: Sendable {
                 entries += 1
                 guard entries <= 50_000 else { throw DocumentError.indexLimit }
                 let metadata = try file.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-                guard metadata.isSymbolicLink != true, metadata.isRegularFile == true else { continue }
+                guard metadata.isSymbolicLink != true else { continue }
+                if DocumentExtractor.isDocumentPackage(file) {
+                    enumerator.skipDescendants()
+                } else if metadata.isRegularFile != true { continue }
                 guard DocumentExtractor.supports(file) else {
                     notices.append("\(file.lastPathComponent) : format ignoré")
                     continue
@@ -154,7 +157,14 @@ public struct DocumentLibrary: Sendable {
             throw DocumentError.invalidTool
         }
         let image: CGImage
-        if let match = passage.location.firstMatch(of: /^page ([0-9]+)/), let number = Int(match.1) {
+        if file.pathExtension.lowercased() == "pages" {
+            let container = try IWorkArchive.Container(url: file)
+            guard let match = passage.location.firstMatch(of: /^image ([0-9]+)/), let number = Int(match.1), number > 0,
+                  let name = try PagesDocumentReader.imageNames(in: container).dropFirst(number - 1).first else {
+                throw DocumentError.noPageImage
+            }
+            image = try PagesDocumentReader.image(name, in: container, maximumPixels: maximumPixels)
+        } else if let match = passage.location.firstMatch(of: /^page ([0-9]+)/), let number = Int(match.1) {
             guard let document = PDFDocument(url: file), !document.isLocked,
                   let page = document.page(at: number - 1)?.pageRef else { throw DocumentError.noPageImage }
             image = try DocumentExtractor.render(page, maximumPixels: CGFloat(maximumPixels))
@@ -186,6 +196,34 @@ public struct DocumentLibrary: Sendable {
                 WHERE p.file_id=? AND p.ordinal=?
                 """, [origin[0], String(ordinal + offset)]).first else { throw DocumentError.invalidTool }
         return Self.passage(row)
+    }
+
+    /// Writes the indexed text of the documents with these extensions under `directory`, at their relative path plus
+    /// ".txt", each extract headed by its location; returns the paths written. Documents beyond the budget are left out.
+    public func writeExtractedTexts(to directory: URL, extensions: Set<String>,
+                                    maximumCharacters: Int = 50_000_000) throws -> [String] {
+        guard !extensions.isEmpty else { return [] }
+        let db = try IndexDatabase(url: index.url)
+        let condition = extensions.sorted().map { _ in "lower(f.path) LIKE ?" }.joined(separator: " OR ")
+        let files = try db.rows("SELECT f.id,f.path FROM files f WHERE (\(condition)) AND f.error IS NULL ORDER BY f.path",
+            extensions.sorted().map { "%." + $0.lowercased() })
+        let base = directory.standardizedFileURL.path + "/"
+        var written: [String] = []
+        var characters = 0
+        for file in files {
+            try Task.checkCancellation()
+            let passages = try db.rows("SELECT location,text FROM passages WHERE file_id=? ORDER BY ordinal", [file[0]])
+            let text = passages.map { "[\($0[0])]\n\($0[1])" }.joined(separator: "\n")
+            characters += text.count
+            guard characters <= maximumCharacters else { break }
+            let target = directory.appending(path: file[1] + ".txt").standardizedFileURL
+            guard target.path.hasPrefix(base) else { continue }
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700])
+            try Data(text.utf8).write(to: target, options: .withoutOverwriting)
+            written.append(file[1])
+        }
+        return written
     }
 
     func list(offset: Int, query: String? = nil) throws -> String {
@@ -220,7 +258,10 @@ public struct DocumentLibrary: Sendable {
     private static func fingerprint(_ url: URL) throws -> String {
         let metadata = try url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey, .creationDateKey, .isSymbolicLinkKey])
         guard metadata.isSymbolicLink != true else { throw DocumentError.unsupported }
-        return "\(metadata.fileSize ?? -1):\(metadata.contentModificationDate?.timeIntervalSince1970 ?? 0):\(metadata.creationDate?.timeIntervalSince1970 ?? 0)"
+        let own = "\(metadata.fileSize ?? -1):\(metadata.contentModificationDate?.timeIntervalSince1970 ?? 0):\(metadata.creationDate?.timeIntervalSince1970 ?? 0)"
+        // A package folder keeps its dates when Pages rewrites the files inside it.
+        guard DocumentExtractor.isDocumentPackage(url) else { return own }
+        return own + "/" + (try fingerprint(url.appending(path: "Index/Document.iwa")))
     }
 
     private static func checkBudget(_ db: IndexDatabase) throws {

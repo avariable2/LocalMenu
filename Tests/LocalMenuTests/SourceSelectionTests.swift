@@ -68,9 +68,9 @@ struct SourceSelectionTests {
     @Test func remembersEngineChoiceAcrossLaunches() throws {
         let root = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
-        let suite = "LocalMenuTests-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = try TemporaryDefaults()
+        defer { preferences.remove() }
+        let defaults = preferences.defaults
         let store = SourceStore(directory: root.appending(path: "cache"))
         let first = ChatModel(store: store, defaults: defaults)
         #expect(first.engine == .local)

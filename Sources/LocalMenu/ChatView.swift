@@ -30,18 +30,23 @@ struct ChatView: View {
                         .accessibilityLabel("Moteur Claude Code, hors du Mac")
                 }
                 if chat.isLoading {
-                    ProgressView(chat.activity)
-                        .labelsHidden()
-                        .controlSize(.small)
-                        .help(chat.activity)
+                    if !(chat.autoCopy && chat.isAnswering) {
+                        ProgressView(chat.activity)
+                            .labelsHidden()
+                            .controlSize(.small)
+                            .help(chat.activity)
+                    }
                     Button("Annuler", systemImage: "stop.circle", action: chat.cancel)
                         .labelStyle(.iconOnly)
                         .buttonStyle(.plain)
                         .help("Annuler la réponse")
+                } else if chat.autoCopy, !chat.answer.isEmpty {
+                    CopyAnswerButton(showsCopied: chat.justCopied, copy: chat.copyAnswer)
                 }
                 Menu("Actions", systemImage: "ellipsis") {
                     Toggle("Rechercher dans les sources", isOn: $chat.useSources)
                         .disabled(chat.isLoading || chat.attachment == nil)
+                    Toggle("Copier automatiquement la réponse", isOn: $chat.autoCopy)
                     Picker("Moteur", selection: $chat.engine) {
                         ForEach(Engine.allCases, id: \.self) { Text($0.title).tag($0) }
                     }
@@ -66,6 +71,13 @@ struct ChatView: View {
                     .strokeBorder(.quaternary, lineWidth: 1)
                     .allowsHitTesting(false)
             }
+            .overlay {
+                if chat.autoCopy {
+                    GenerationBar(isGenerating: chat.isAnswering, showsCompletion: chat.justCompleted)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                        .clipShape(.rect(cornerRadius: 10))
+                }
+            }
 
             if chat.isLoading {
                 Text(chat.activity)
@@ -87,7 +99,8 @@ struct ChatView: View {
                     .padding(.horizontal, 4)
             }
 
-            if !chat.answer.isEmpty {
+            // In copy mode the answer goes straight to the clipboard; the panel only confirms it.
+            if !chat.answer.isEmpty, !chat.autoCopy {
                 Divider()
                     .padding(.horizontal, 2)
                 AnswerView(text: chat.answer, sources: chat.sources)

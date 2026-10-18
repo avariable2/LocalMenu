@@ -14,6 +14,22 @@ struct LiveDocumentTests {
         #expect(result.filter(\.isNumber).contains("7300"))
     }
 
+    @Test func answersGiveOnlyWhatWasAsked() async throws {
+        let plain = try await OllamaClient().answer(question: "Quelle est la capitale de l'Australie ?")
+        print("Live concise plain: \(plain)")
+        #expect(plain.contains("Canberra"))
+        #expect(plain.split(whereSeparator: \.isWhitespace).count <= 15)
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try DocumentFixtures.writeChartReport(at: root.appending(path: "heliodore-2025.pdf"))
+        let chart = try await OllamaClient().answer(question: "Quel est le chiffre d'affaires du T2 dans le rapport Heliodore ?",
+            library: DocumentLibrary(url: root))
+        print("Live concise document: \(chart.toolsUsed) \(chart.text)")
+        #expect(chart.text.contains("185"))
+        #expect(chart.text.split(whereSeparator: \.isWhitespace).count <= 30)
+    }
+
     @Test func modelActuallyListsReadsAndSearches() async throws {
         let library = try DocumentFixtures.withDirectory { root in
             try DocumentFixtures.write("Projet AZUR-741. Livraison le 2 janvier 2027.", to: root.appending(path: "ancien.txt"))
@@ -83,6 +99,21 @@ struct LiveDocumentTests {
         let text = result.text.lowercased()
         #expect(["pas", "aucun", "absen", "non", "ne contient"].contains { text.contains($0) })
         #expect(!result.text.contains("FR76"))
+    }
+
+    @Test func modelReadsAPagesDocument() async throws {
+        let library = try DocumentFixtures.withDirectory { root in
+            try FileManager.default.copyItem(at: PagesDocumentTests.fixture, to: root.appending(path: "rapport.pages"))
+            return try DocumentLibrary(url: root)
+        }
+        let result = try await OllamaClient().answer(question:
+            "Dans le rapport Pages, combien de vis M3 sont en stock, et quelle valeur atteint la région 2 en juin sur le graphique ?",
+            library: library)
+        print("Live Pages tools: \(result.toolsUsed); answer: \(result.text)")
+        let digits = result.text.filter(\.isNumber)
+        #expect(digits.contains("1250"))
+        #expect(result.text.contains("70"))
+        #expect(result.sources.map(\.file).allSatisfy { $0 == "rapport.pages" } && !result.sources.isEmpty)
     }
 
     @Test func modelAnswersUsingOCRAndSpreadsheetSources() async throws {
